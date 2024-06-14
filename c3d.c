@@ -11,7 +11,7 @@ typedef struct vec {
 } vec;
 
 typedef struct face {
-	size_t v[3], n[3], uv[3];
+	size_t v[3], vn[3], vt[3];
 } face;
 
 typedef struct matrix {
@@ -298,15 +298,34 @@ void draw(screen *scr, scene *scn) {
 
 void load_obj(FILE *f, mesh *m) {
 	char c;
-
-	while((c = fgetc(f)) != EOF) {
-		if (c == 'v') {
+	
+	char s[16] = {0};
+	while(fscanf(f, "%15s", s) != EOF) {
+		if (strcmp(s, "v") == 0) {
 			vec v;
 			fscanf(f, " %lf %lf %lf", &v.x, &v.y, &v.z);
 			add_vert(m, &v);
-		} else if (c == 'f') {
+		} else if (strcmp(s, "vn") == 0) {
+			vec v;
+			fscanf(f, " %lf %lf %lf", &v.x, &v.y, &v.z);
+			add_norm(m, &v);
+		} else if (strcmp(s, "vt") == 0) {
+			vec v;
+			fscanf(f, " %lf %lf %lf", &v.x, &v.y, &v.z);
+			add_uv(m, &v);
+		} else if (strcmp(s, "f") == 0) {
 			face b;
-			fscanf(f, " %zu %zu %zu", &b.v[0], &b.v[1], &b.v[2]);
+			for (int i = 0; i < 3; i++) {
+				fscanf(f, "%zu", &b.v[i]);
+				if (fgetc(f) == '/') {
+						fscanf(f, "%zu", &b.vt[i]);
+						if (fgetc(f) == '/') {
+							fscanf(f, "%zu", &b.vn[i]);
+						}
+				}
+			}
+
+			fscanf(f, "%zu %zu %zu", &b.v[0], &b.v[1], &b.v[2]);
 			add_face(m, &b);
 		}
 	}
@@ -329,8 +348,6 @@ int main(int argc, char *argv[]) {
 	mesh m = {0};
 	load_obj(f, &m);
 	fclose(f);
-
-	printf("%d %d", m.vert_len, m.face_len);
 
 	double zmax = 0;
 	for (int i = 0; i < m.vert_len; i++) {
