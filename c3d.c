@@ -2,16 +2,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "vec.h"
 #include "tigr.h"
 
 #define CHUNK_SIZE 1024
 
-typedef struct vec {
-	double x, y, z;
-} vec;
-
 typedef struct face {
-	size_t v[3], vn[3], vt[3];
+	size_t v[3], n[3], t[3];
 } face;
 
 typedef struct matrix {
@@ -21,6 +19,7 @@ typedef struct matrix {
 typedef struct trig {
 	vec p[3];
 	vec n[3];
+	vec t[3];
 } trig;
 
 typedef struct mesh {
@@ -82,27 +81,11 @@ void matmul(vec i, matrix m, vec *o) {
 
 	double w = i.x * m.m[0][3] + i.y * m.m[1][3] + i.z * m.m[2][3] + m.m[3][3];
 
-	o->x /= w;
-	o->y /= w;
-	o->z /= w;
+	vec_scale(o, 1 / w);
 }
 
-void normal(vec v1, vec v2, vec v3, vec *o) {
-	vec e1 = {v2.x - v1.x, v2.y - v1.y, v2.z - v1.z},
-		e2 = {v3.x - v2.x, v3.y - v2.y, v3.z - v2.z};
-	
-	o->x = e1.y * e2.z - e1.z * e2.y;
-	o->y = e1.z * e2.x - e1.x * e2.z;
-	o->z = e1.x * e2.y - e1.y * e2.x;
-}
 
-void vsub(vec *v1, vec v2) {
-	v1->x -= v2.x;	
-	v1->y -= v2.y;	
-	v1->z -= v2.z;	
-}
-
-void draw_trig(screen *scr, trig t, double brightness) {
+void draw_trig(screen *scr, trig t, vec light) {
 	if (t.p[0].x > 1 && t.p[1].x > 1 && t.p[2].x > 1) return;
 	if (t.p[0].x < -1 && t.p[1].x < -1 && t.p[2].x < -1) return;
 	if (t.p[0].y > 1 && t.p[1].y > 1 && t.p[2].y > 1) return;
@@ -113,38 +96,58 @@ void draw_trig(screen *scr, trig t, double brightness) {
 		t.p[i].y = (t.p[i].y + 1) * scr->height / 2;
 		// printf("%lf %lf\n", t.p[i].x, t.p[i].y);
 	}
-	
-	TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
-	
+
 	vec v1, v2, v3, v4;
+	vec n1, n2, n3, n4;
 	if (t.p[0].y < t.p[1].y && t.p[0].y < t.p[2].y) {
 		v1 = t.p[0];
+		n1 = t.n[0];
 		v2 = t.p[1];
+		n2 = t.n[1];
 		v3 = t.p[2];
+		n3 = t.n[2];
 	} else if (t.p[1].y < t.p[2].y && t.p[1].y < t.p[0].y) {
 		v1 = t.p[1];
+		n1 = t.n[1];
 		v2 = t.p[2];
+		n2 = t.n[2];
 		v3 = t.p[0];
+		n3 = t.n[0];
 	} else {
 		v1 = t.p[2];
+		n1 = t.n[2];
 		v2 = t.p[0];
+		n2 = t.n[0];
 		v3 = t.p[1];
+		n3 = t.n[1];
 	}
 	if (v3.y < v2.y) {
 		v4 = v3;
+		n4 = n3;
 		v3 = v2;
+		n3 = n2;		
 		v2 = v4;
+		n2 = n4;
 	}	
 	v4.y = v2.y;
 	v4.x = ((v1.y - v2.y) * v3.x + (v2.y - v3.y) * v1.x) / (v1.y - v3.y);
 	v4.z = ((v1.y - v2.y) * v3.z + (v2.y - v3.y) * v1.z) / (v1.y - v3.y);
-
+	
 	if (v2.x > v4.x) {
 		double tmp = v2.x;
 		v2.x = v4.x;
 		v4.x = tmp;
 	}
-	
+
+	{
+		vec tmp = n3;
+		n4 = n1;
+		vec_scale(&tmp, v1.y - v2.y);
+		vec_scale(&n4, v2.y - v3.y);
+		vec_add(&n4, tmp);
+		vec_scale(&n4, 1 / (v1.y - v3.y));
+	}
+
 	v1.x = floor(v1.x);
 	v1.y = floor(v1.y);
 	v2.x = floor(v2.x);
@@ -153,7 +156,7 @@ void draw_trig(screen *scr, trig t, double brightness) {
 	v3.y = ceil(v3.y);
 	v4.x = ceil(v4.x);
 	v4.y = floor(v4.y);
-	
+
 	{
 		double xl = v1.x,
 			   xr = v1.x,
@@ -163,12 +166,24 @@ void draw_trig(screen *scr, trig t, double brightness) {
 			   zr = v1.z,
 			   dzl = (v2.z - v1.z) / (v2.y - v1.y),
 			   dzr = (v4.z - v1.z) / (v2.y - v1.y);
+		vec nl = n1, nr = n1, dnl = n2, dnr = n4;
+		vec_sub(&dnl, n1);
+		vec_scale(&dnl, 1 / (v2.y - v1.y));
+		vec_sub(&dnr, n1);
+		vec_scale(&dnr, 1 / (v2.y - v1.y));
 		for (double y = v1.y; y <= v2.y; y++) {
 			double z = zl, dz = (zr - zl) / (xr - xl);
-			for (int x = xl; x <= xr; x++, z+=dz) {
+			vec n = nl, dn = nr;
+			vec_sub(&dn, nl);
+			vec_scale(&dn, 1 / (xr - xl));
+			for (int x = xl; x <= xr; x++, z+=dz, vec_add(&n, dn)) {
 				if (y < 0 || y >= scr->height) continue;
 				if (x < 0 || x >= scr->width) continue;
 				if (z < scr->z[(int) y * scr->width + x]) {
+					double dot = vec_dot(n, light) / vec_dot(n, n);
+					double brightness = (1 - dot) / 2;
+					TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
+
 					tigrPlot(scr->scr, x, y, c);
 					scr->z[(int) y * scr->width + x] = z;
 				}
@@ -177,6 +192,8 @@ void draw_trig(screen *scr, trig t, double brightness) {
 			xr += dxr;
 			zl += dzl;
 			zr += dzr;
+			vec_add(&nl, dnl);
+			vec_add(&nr, dnr);
 		}
 	}
 	{
@@ -188,12 +205,24 @@ void draw_trig(screen *scr, trig t, double brightness) {
 			   zr = v3.z,
 			   dzl = (v2.z - v3.z) / (v3.y - v2.y),
 			   dzr = (v4.z - v3.z) / (v3.y - v2.y);
+		vec nl = n1, nr = n1, dnl = n2, dnr = n4;
+		vec_sub(&dnl, n1);
+		vec_scale(&dnl, 1 / (v2.y - v1.y));
+		vec_sub(&dnr, n1);
+		vec_scale(&dnr, 1 / (v2.y - v1.y));
 		for (double y = v3.y; y >= v2.y; y--) {
 			double z = zl, dz = (zr - zl) / (xr - xl);
-			for (int x = xl; x <= xr; x++, z+=dz) {
+			vec n = nl, dn = nr;
+			vec_sub(&dn, nl);
+			vec_scale(&dn, 1 / (xr - xl));
+			for (int x = xl; x <= xr; x++, z+=dz, vec_add(&n, dn)) {
 				if (y < 0 || y >= scr->height) continue;
 				if (x < 0 || x >= scr->width) continue;
 				if (z < scr->z[(int) y * scr->width + x]) {
+					double dot = vec_dot(n, light) / vec_dot(n, n);
+					double brightness = (1 - dot) / 2;
+					TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
+
 					tigrPlot(scr->scr, x, y, c);
 					scr->z[(int) y * scr->width + x] = z;
 				}
@@ -210,9 +239,16 @@ void draw_trig(screen *scr, trig t, double brightness) {
 	{
 		double z = v2.z,
 			   dz = (v4.z - v2.z) / (v4.x - v2.x);
-		for (int x = v2.x; x < v4.x; x++, z+=dz) {
+		vec n = n2, dn = n4;
+		vec_sub(&dn, n);
+		vec_scale(&dn, 1 / (v4.x - v2.x));
+		for (int x = v2.x; x < v4.x; x++, z+=dz, vec_add(&n, dn)) {
 			if (x < 0 || x >= scr->width) continue;
 			if (z < scr->z[(int) v2.y * scr->width + x]) {
+				double dot = vec_dot(n, light) / vec_dot(n, n);
+				double brightness = (1 - dot) / 2;
+				TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
+				
 				tigrPlot(scr->scr, x, v2.y, c);
 				scr->z[(int) v2.y * scr->width + x] = z;
 			}
@@ -265,40 +301,38 @@ void draw(screen *scr, scene *scn) {
 	for (int i = 0; i < scn->mesh.face_len; i++) {
 		face f = scn->mesh.faces[i];
 
-		vec v1, v2, v3, tmp;		
+		vec v1, v2, v3, n1, n2, n3, tmp;		
 		matmul(scn->mesh.verts[f.v[0] - 1], rot_y, &tmp);
 		matmul(tmp, rot_z, &v1);
 		matmul(scn->mesh.verts[f.v[1] - 1], rot_y, &tmp);
 		matmul(tmp, rot_z, &v2);
 		matmul(scn->mesh.verts[f.v[2] - 1], rot_y, &tmp);
 		matmul(tmp, rot_z, &v3);
-
-		vec n;
-		normal(v1, v2, v3, &n);
-
-		double dot = (n.x * scn->light.x + n.y * scn->light.y + n.z * scn->light.z);
-		dot /= sqrt(n.x*n.x + n.y * n.y + n.z * n.z);
-		double brightness = (1 - dot) / 2;	
-
-		vsub(&v1, scn->camera.origin);
-		vsub(&v2, scn->camera.origin);
-		vsub(&v3, scn->camera.origin);
+		
+		vec_sub(&v1, scn->camera.origin);
+		vec_sub(&v2, scn->camera.origin);
+		vec_sub(&v3, scn->camera.origin);
 
 		trig t;	
 		matmul(v1, proj, &t.p[0]);
 		matmul(v2, proj, &t.p[1]);
 		matmul(v3, proj, &t.p[2]);
+		
+		matmul(scn->mesh.norms[f.n[0] - 1], rot_y, &tmp);
+		matmul(tmp, rot_z, &t.n[0]);
+		matmul(scn->mesh.norms[f.n[1] - 1], rot_y, &tmp);
+		matmul(tmp, rot_z, &t.n[1]);
+		matmul(scn->mesh.norms[f.n[2] - 1], rot_y, &tmp);
+		matmul(tmp, rot_z, &t.n[2]);
 
 		if (fabs(t.p[0].z) > 1 || fabs(t.p[1].z) > 1 || fabs(t.p[2].z) > 1) continue;
-		draw_trig(scr, t, brightness);	
+		draw_trig(scr, t, scn->light);	
 
 	}
 }
 
 
 void load_obj(FILE *f, mesh *m) {
-	char c;
-	
 	char s[16] = {0};
 	while(fscanf(f, "%15s", s) != EOF) {
 		if (strcmp(s, "v") == 0) {
@@ -317,15 +351,11 @@ void load_obj(FILE *f, mesh *m) {
 			face b;
 			for (int i = 0; i < 3; i++) {
 				fscanf(f, "%zu", &b.v[i]);
-				if (fgetc(f) == '/') {
-						fscanf(f, "%zu", &b.vt[i]);
-						if (fgetc(f) == '/') {
-							fscanf(f, "%zu", &b.vn[i]);
-						}
-				}
+				if (fgetc(f) != '/') continue;
+				fscanf(f, "%zu", &b.t[i]);
+				if (fgetc(f) != '/') continue;
+				fscanf(f, "%zu", &b.n[i]);
 			}
-
-			fscanf(f, "%zu %zu %zu", &b.v[0], &b.v[1], &b.v[2]);
 			add_face(m, &b);
 		}
 	}
