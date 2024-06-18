@@ -132,13 +132,7 @@ void draw_trig(screen *scr, trig t, vec light) {
 	v4.y = v2.y;
 	v4.x = ((v1.y - v2.y) * v3.x + (v2.y - v3.y) * v1.x) / (v1.y - v3.y);
 	v4.z = ((v1.y - v2.y) * v3.z + (v2.y - v3.y) * v1.z) / (v1.y - v3.y);
-	
-	if (v2.x > v4.x) {
-		double tmp = v2.x;
-		v2.x = v4.x;
-		v4.x = tmp;
-	}
-
+		
 	{
 		vec tmp = n3;
 		n4 = n1;
@@ -147,7 +141,16 @@ void draw_trig(screen *scr, trig t, vec light) {
 		vec_add(&n4, tmp);
 		vec_scale(&n4, 1 / (v1.y - v3.y));
 	}
-
+	
+	if (v2.x > v4.x) {
+		double tmp = v2.x;
+		v2.x = v4.x;
+		v4.x = tmp;
+		vec tmp2 = n2;
+		n2 = n4;
+		n4 = tmp2;
+	}
+	
 	v1.x = floor(v1.x);
 	v1.y = floor(v1.y);
 	v2.x = floor(v2.x);
@@ -205,11 +208,11 @@ void draw_trig(screen *scr, trig t, vec light) {
 			   zr = v3.z,
 			   dzl = (v2.z - v3.z) / (v3.y - v2.y),
 			   dzr = (v4.z - v3.z) / (v3.y - v2.y);
-		vec nl = n1, nr = n1, dnl = n2, dnr = n4;
-		vec_sub(&dnl, n1);
-		vec_scale(&dnl, 1 / (v2.y - v1.y));
-		vec_sub(&dnr, n1);
-		vec_scale(&dnr, 1 / (v2.y - v1.y));
+		vec nl = n3, nr = n3, dnl = n2, dnr = n4;
+		vec_sub(&dnl, n3);
+		vec_scale(&dnl, 1 / (v3.y - v2.y));
+		vec_sub(&dnr, n3);
+		vec_scale(&dnr, 1 / (v3.y - v2.y));
 		for (double y = v3.y; y >= v2.y; y--) {
 			double z = zl, dz = (zr - zl) / (xr - xl);
 			vec n = nl, dn = nr;
@@ -231,6 +234,8 @@ void draw_trig(screen *scr, trig t, vec light) {
 			xr += dxr;
 			zl += dzl;
 			zr += dzr;
+			vec_add(&nl, dnl);
+			vec_add(&nr, dnr);
 		}
 	}
 
@@ -248,7 +253,7 @@ void draw_trig(screen *scr, trig t, vec light) {
 				double dot = vec_dot(n, light) / vec_dot(n, n);
 				double brightness = (1 - dot) / 2;
 				TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
-				
+
 				tigrPlot(scr->scr, x, v2.y, c);
 				scr->z[(int) v2.y * scr->width + x] = z;
 			}
@@ -314,18 +319,36 @@ void draw(screen *scr, scene *scn) {
 		vec_sub(&v3, scn->camera.origin);
 
 		trig t;	
+		if (f.n[0] <= scn->mesh.norm_len && f.n[1] <= scn->mesh.norm_len && f.n[2] <= scn->mesh.norm_len) {
+			matmul(scn->mesh.norms[f.n[0] - 1], rot_y, &tmp);
+			matmul(tmp, rot_z, &t.n[0]);
+			matmul(scn->mesh.norms[f.n[1] - 1], rot_y, &tmp);
+			matmul(tmp, rot_z, &t.n[1]);
+			matmul(scn->mesh.norms[f.n[2] - 1], rot_y, &tmp);
+			matmul(tmp, rot_z, &t.n[2]);
+		} else {
+			printf("no normal\n");
+			vec e1 = v2, e2 = v3;
+			vec_sub(&e1, v1);
+			vec_sub(&e2, v1);
+			
+			vec n = {
+				e1.y * e2.z - e1.z * e2.y,
+				e1.z * e2.x - e1.x * e2.z,
+				e1.x * e2.y - e1.y * e2.x
+			};
+			vec_unit(&n);
+			t.n[0] = n;
+			t.n[1] = n;
+			t.n[2] = n;
+		}
+		
 		matmul(v1, proj, &t.p[0]);
 		matmul(v2, proj, &t.p[1]);
 		matmul(v3, proj, &t.p[2]);
 		
-		matmul(scn->mesh.norms[f.n[0] - 1], rot_y, &tmp);
-		matmul(tmp, rot_z, &t.n[0]);
-		matmul(scn->mesh.norms[f.n[1] - 1], rot_y, &tmp);
-		matmul(tmp, rot_z, &t.n[1]);
-		matmul(scn->mesh.norms[f.n[2] - 1], rot_y, &tmp);
-		matmul(tmp, rot_z, &t.n[2]);
-
 		if (fabs(t.p[0].z) > 1 || fabs(t.p[1].z) > 1 || fabs(t.p[2].z) > 1) continue;
+		
 		draw_trig(scr, t, scn->light);	
 
 	}
@@ -340,11 +363,11 @@ void load_obj(FILE *f, mesh *m) {
 			fscanf(f, " %lf %lf %lf", &v.x, &v.y, &v.z);
 			add_vert(m, &v);
 		} else if (strcmp(s, "vn") == 0) {
-			vec v;
+			vec v = {0, 0, 0};
 			fscanf(f, " %lf %lf %lf", &v.x, &v.y, &v.z);
 			add_norm(m, &v);
 		} else if (strcmp(s, "vt") == 0) {
-			vec v;
+			vec v = {0, 0, 0};
 			fscanf(f, " %lf %lf %lf", &v.x, &v.y, &v.z);
 			add_uv(m, &v);
 		} else if (strcmp(s, "f") == 0) {
@@ -383,6 +406,8 @@ int main(int argc, char *argv[]) {
 	for (int i = 0; i < m.vert_len; i++) {
 		zmax = m.verts[i].z > zmax? m.verts[i].z: zmax;	
 	}
+
+	printf("hi %d %d %d %d\n", m.vert_len, m.norm_len, m.uv_len, m.face_len);
 
 	vec light = { 0.56, -0.56, -0.56 };
 	camera c = {0.1, 10000.0, 90.0, (float) WIDTH / HEIGHT, 0, 0, {0, 0, 3 * zmax}}; 

@@ -27,6 +27,6 @@ double vec_dot(vec v1, vec v2) {
 }
 
 void vec_unit(vec *v) {
-	vec_scale(v, vec_dot(*v ,*v));
+	vec_scale(v, 1 / sqrt(vec_dot(*v ,*v)));
 }
 
