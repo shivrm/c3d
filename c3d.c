@@ -185,7 +185,7 @@ void draw_trig(screen *scr, trig t, vec light) {
 				if (z < scr->z[(int) y * scr->width + x]) {
 					double dot = vec_dot(n, light) / vec_dot(n, n);
 					double brightness = (1 - dot) / 2;
-					TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
+					TPixel c = tigrRGB(178 * brightness, 92 * brightness, 93 * brightness);
 
 					tigrPlot(scr->scr, x, y, c);
 					scr->z[(int) y * scr->width + x] = z;
@@ -224,7 +224,7 @@ void draw_trig(screen *scr, trig t, vec light) {
 				if (z < scr->z[(int) y * scr->width + x]) {
 					double dot = vec_dot(n, light) / vec_dot(n, n);
 					double brightness = (1 - dot) / 2;
-					TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
+					TPixel c = tigrRGB(178 * brightness, 92 * brightness, 93 * brightness);
 
 					tigrPlot(scr->scr, x, y, c);
 					scr->z[(int) y * scr->width + x] = z;
@@ -252,7 +252,7 @@ void draw_trig(screen *scr, trig t, vec light) {
 			if (z < scr->z[(int) v2.y * scr->width + x]) {
 				double dot = vec_dot(n, light) / vec_dot(n, n);
 				double brightness = (1 - dot) / 2;
-				TPixel c = tigrRGB(255 * brightness, 255 * brightness, 255 * brightness);
+				TPixel c = tigrRGB(178 * brightness, 92 * brightness, 93 * brightness);
 
 				tigrPlot(scr->scr, x, v2.y, c);
 				scr->z[(int) v2.y * scr->width + x] = z;
@@ -260,12 +260,6 @@ void draw_trig(screen *scr, trig t, vec light) {
 
 		}
 	}
-	
-	/*
-	tigrLine(scr->scr, t.p[0].x, t.p[0].y, t.p[1].x, t.p[1].y, c);
-	tigrLine(scr->scr, t.p[1].x, t.p[1].y, t.p[2].x, t.p[2].y, c);
-	tigrLine(scr->scr, t.p[2].x, t.p[2].y, t.p[0].x, t.p[0].y, c);
-	*/
 }
 
 void draw(screen *scr, scene *scn) {
@@ -384,8 +378,8 @@ void load_obj(FILE *f, mesh *m) {
 	}
 };
 
-#define WIDTH 1920
-#define HEIGHT 1080
+#define WIDTH 1280
+#define HEIGHT 720
 
 int main(int argc, char *argv[]) {	
 	if (argc != 2) {
@@ -406,8 +400,6 @@ int main(int argc, char *argv[]) {
 	for (int i = 0; i < m.vert_len; i++) {
 		zmax = m.verts[i].z > zmax? m.verts[i].z: zmax;	
 	}
-
-	printf("hi %d %d %d %d\n", m.vert_len, m.norm_len, m.uv_len, m.face_len);
 
 	vec light = { 0.56, -0.56, -0.56 };
 	camera c = {0.1, 10000.0, 90.0, (float) WIDTH / HEIGHT, 0, 0, {0, 0, 3 * zmax}}; 
