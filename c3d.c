@@ -1,7 +1,10 @@
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <omp.h>
+#include <unistd.h>
 
 #include "vec.h"
 #include "tigr.h"
@@ -38,10 +41,16 @@ typedef struct camera {
 	vec origin;
 } camera;
 
+typedef struct texture {
+    size_t width, height, maxval;
+    uint8_t *data;
+} texture;
+
 typedef struct scene {
 	mesh mesh;
 	camera camera;
 	vec light;
+    texture tex;
 } scene;
 
 typedef struct screen {
@@ -84,8 +93,52 @@ void matmul(vec i, matrix m, vec *o) {
 	vec_scale(o, 1 / w);
 }
 
+vec color_at(texture tex, vec *t) {
+    float x = t->x * tex.width, y = t->y * tex.height; 
+    
+    size_t xint = x, yint = y;
+    float xfrac = fmod(x, 1), yfrac = fmod(y, 1);
 
-void draw_trig(screen *scr, trig t, vec light) {
+    vec v = {0};
+    v.x = tex.data[3*(yint*tex.width + xint)];
+    v.y = tex.data[3*(yint*tex.width + xint) + 1];
+    v.z = tex.data[3*(yint*tex.width + xint) + 2];
+    vec_scale(&v, 1 - xfrac);
+
+    vec tmp = {0};
+    tmp.x = tex.data[3*(yint*tex.width + xint + 1)];
+    tmp.y = tex.data[3*(yint*tex.width + xint + 1) + 1];
+    tmp.z = tex.data[3*(yint*tex.width + xint + 1) + 2];
+    vec_scale(&tmp, xfrac);
+    vec_add(&v, tmp);
+
+    vec_scale(&v, 1 - yfrac);
+
+    tmp.x = tex.data[3*((yint+1)*tex.width + xint)];
+    tmp.y = tex.data[3*((yint+1)*tex.width + xint) + 1];
+    tmp.z = tex.data[3*((yint+1)*tex.width + xint) + 2];
+    vec_scale(&tmp, (1 - xfrac) * yfrac);
+    vec_add(&v, tmp);
+
+    tmp.x = tex.data[3*((yint+1)*tex.width + xint + 1)];
+    tmp.y = tex.data[3*((yint+1)*tex.width + xint + 1) + 1];
+    tmp.z = tex.data[3*((yint+1)*tex.width + xint + 1) + 2];
+    vec_scale(&tmp, xfrac * yfrac);    
+    vec_add(&v, tmp); 
+
+    return v;
+}
+
+TPixel get_color(texture tex, vec* t, float brightness) {
+    // return tigrRGB(t->x * brightness * 255, t->y * brightness * 255, 0);
+    // return tigrRGB(brightness * 255, brightness * 255, brightness * 255);
+    vec rgb = color_at(tex, t);
+    vec_scale(&rgb, brightness);
+    return tigrRGB(rgb.x, rgb.y, rgb.z);
+}
+
+
+void draw_trig(screen *scr, texture tex, trig t, vec light) {
 	if (t.p[0].x > 1 && t.p[1].x > 1 && t.p[2].x > 1) return;
 	if (t.p[0].x < -1 && t.p[1].x < -1 && t.p[2].x < -1) return;
 	if (t.p[0].y > 1 && t.p[1].y > 1 && t.p[2].y > 1) return;
@@ -94,40 +147,52 @@ void draw_trig(screen *scr, trig t, vec light) {
 	for (int i = 0; i < 3; i++) {
 		t.p[i].x = (t.p[i].x + 1) * scr->width / 2;
 		t.p[i].y = (t.p[i].y + 1) * scr->height / 2;
-		// printf("%lf %lf\n", t.p[i].x, t.p[i].y);
 	}
 
 	vec v1, v2, v3, v4;
 	vec n1, n2, n3, n4;
+	vec t1, t2, t3, t4;
 	if (t.p[0].y < t.p[1].y && t.p[0].y < t.p[2].y) {
 		v1 = t.p[0];
 		n1 = t.n[0];
+        t1 = t.t[0];
 		v2 = t.p[1];
 		n2 = t.n[1];
+        t2 = t.t[1];
 		v3 = t.p[2];
 		n3 = t.n[2];
+        t3 = t.t[2];
 	} else if (t.p[1].y < t.p[2].y && t.p[1].y < t.p[0].y) {
 		v1 = t.p[1];
 		n1 = t.n[1];
+        t1 = t.t[1];
 		v2 = t.p[2];
 		n2 = t.n[2];
+        t2 = t.t[2];
 		v3 = t.p[0];
 		n3 = t.n[0];
+        t3 = t.t[0];
 	} else {
 		v1 = t.p[2];
 		n1 = t.n[2];
+        t1 = t.t[2];
 		v2 = t.p[0];
 		n2 = t.n[0];
+        t2 = t.t[0];
 		v3 = t.p[1];
 		n3 = t.n[1];
+        t3 = t.t[1];
 	}
 	if (v3.y < v2.y) {
 		v4 = v3;
 		n4 = n3;
+        t4 = t3;
 		v3 = v2;
-		n3 = n2;		
+		n3 = n2;
+        t3 = t2;
 		v2 = v4;
 		n2 = n4;
+        t2 = t4;
 	}	
 	v4.y = v2.y;
 	v4.x = ((v1.y - v2.y) * v3.x + (v2.y - v3.y) * v1.x) / (v1.y - v3.y);
@@ -140,15 +205,27 @@ void draw_trig(screen *scr, trig t, vec light) {
 		vec_scale(&n4, v2.y - v3.y);
 		vec_add(&n4, tmp);
 		vec_scale(&n4, 1 / (v1.y - v3.y));
+
+        tmp = t3;
+		t4 = t1;
+		vec_scale(&tmp, v1.y - v2.y);
+		vec_scale(&t4, v2.y - v3.y);
+		vec_add(&t4, tmp);
+		vec_scale(&t4, 1 / (v1.y - v3.y));
 	}
 	
 	if (v2.x > v4.x) {
 		double tmp = v2.x;
 		v2.x = v4.x;
 		v4.x = tmp;
+
 		vec tmp2 = n2;
 		n2 = n4;
 		n4 = tmp2;
+        
+        tmp2 = t2;
+        t2 = t4;
+        t4 = tmp2;
 	}
 	
 	v1.x = floor(v1.x);
@@ -174,18 +251,30 @@ void draw_trig(screen *scr, trig t, vec light) {
 		vec_scale(&dnl, 1 / (v2.y - v1.y));
 		vec_sub(&dnr, n1);
 		vec_scale(&dnr, 1 / (v2.y - v1.y));
+
+		vec tl = t1, tr = t1, dtl = t2, dtr = t4;
+		vec_sub(&dtl, t1);
+		vec_scale(&dtl, 1 / (v2.y - v1.y));
+		vec_sub(&dtr, t1);
+		vec_scale(&dtr, 1 / (v2.y - v1.y));
+
 		for (double y = v1.y; y <= v2.y; y++) {
 			double z = zl, dz = (zr - zl) / (xr - xl);
 			vec n = nl, dn = nr;
 			vec_sub(&dn, nl);
 			vec_scale(&dn, 1 / (xr - xl));
-			for (int x = xl; x <= xr; x++, z+=dz, vec_add(&n, dn)) {
+
+            vec t = tl, dt = tr;
+			vec_sub(&dt, tl);
+			vec_scale(&dt, 1 / (xr - xl));
+
+			for (int x = xl; x <= xr; x++, z+=dz, vec_add(&n, dn), vec_add(&t, dt)) {
 				if (y < 0 || y >= scr->height) continue;
 				if (x < 0 || x >= scr->width) continue;
 				if (z < scr->z[(int) y * scr->width + x]) {
 					double dot = vec_dot(n, light) / vec_dot(n, n);
 					double brightness = (1 - dot) / 2;
-					TPixel c = tigrRGB(178 * brightness, 92 * brightness, 93 * brightness);
+                    TPixel c = get_color(tex, &t, brightness);
 
 					tigrPlot(scr->scr, x, y, c);
 					scr->z[(int) y * scr->width + x] = z;
@@ -197,6 +286,8 @@ void draw_trig(screen *scr, trig t, vec light) {
 			zr += dzr;
 			vec_add(&nl, dnl);
 			vec_add(&nr, dnr);
+			vec_add(&tl, dtl);
+			vec_add(&tr, dtr);
 		}
 	}
 	{
@@ -213,18 +304,29 @@ void draw_trig(screen *scr, trig t, vec light) {
 		vec_scale(&dnl, 1 / (v3.y - v2.y));
 		vec_sub(&dnr, n3);
 		vec_scale(&dnr, 1 / (v3.y - v2.y));
+		
+        vec tl = t3, tr = t3, dtl = t2, dtr = t4;
+		vec_sub(&dtl, t3);
+		vec_scale(&dtl, 1 / (v3.y - v2.y));
+		vec_sub(&dtr, t3);
+		vec_scale(&dtr, 1 / (v3.y - v2.y));
+
 		for (double y = v3.y; y >= v2.y; y--) {
 			double z = zl, dz = (zr - zl) / (xr - xl);
 			vec n = nl, dn = nr;
 			vec_sub(&dn, nl);
 			vec_scale(&dn, 1 / (xr - xl));
-			for (int x = xl; x <= xr; x++, z+=dz, vec_add(&n, dn)) {
+
+			vec t = tl, dt = tr;
+			vec_sub(&dt, tl);
+			vec_scale(&dt, 1 / (xr - xl));
+			for (int x = xl; x <= xr; x++, z+=dz, vec_add(&n, dn), vec_add(&t, dt)) {
 				if (y < 0 || y >= scr->height) continue;
 				if (x < 0 || x >= scr->width) continue;
 				if (z < scr->z[(int) y * scr->width + x]) {
 					double dot = vec_dot(n, light) / vec_dot(n, n);
 					double brightness = (1 - dot) / 2;
-					TPixel c = tigrRGB(178 * brightness, 92 * brightness, 93 * brightness);
+                    TPixel c = get_color(tex, &t, brightness);
 
 					tigrPlot(scr->scr, x, y, c);
 					scr->z[(int) y * scr->width + x] = z;
@@ -236,6 +338,8 @@ void draw_trig(screen *scr, trig t, vec light) {
 			zr += dzr;
 			vec_add(&nl, dnl);
 			vec_add(&nr, dnr);
+			vec_add(&tl, dtl);
+			vec_add(&tr, dtr);
 		}
 	}
 
@@ -247,13 +351,17 @@ void draw_trig(screen *scr, trig t, vec light) {
 		vec n = n2, dn = n4;
 		vec_sub(&dn, n);
 		vec_scale(&dn, 1 / (v4.x - v2.x));
-		for (int x = v2.x; x < v4.x; x++, z+=dz, vec_add(&n, dn)) {
+
+		vec t = t2, dt = t4;
+		vec_sub(&dt, t);
+		vec_scale(&dt, 1 / (v4.x - v2.x));
+
+		for (int x = v2.x; x < v4.x; x++, z+=dz, vec_add(&n, dn), vec_add(&t, dt)) {
 			if (x < 0 || x >= scr->width) continue;
 			if (z < scr->z[(int) v2.y * scr->width + x]) {
 				double dot = vec_dot(n, light) / vec_dot(n, n);
 				double brightness = (1 - dot) / 2;
-				TPixel c = tigrRGB(178 * brightness, 92 * brightness, 93 * brightness);
-
+                TPixel c = get_color(tex, &t, brightness);
 				tigrPlot(scr->scr, x, v2.y, c);
 				scr->z[(int) v2.y * scr->width + x] = z;
 			}
@@ -270,7 +378,7 @@ void draw(screen *scr, scene *scn) {
 	
 	double hfov = tan(scn->camera.fov * M_PI / 360),
 			vfov = hfov / scn->camera.aspect_ratio,
-			proj_A = (scn->camera.near + scn->camera.far) / (scn->camera.far - scn->camera.near),
+			proj_A =( scn->camera.near + scn->camera.far) / (scn->camera.far - scn->camera.near),
 			proj_B = 2 * scn->camera.near * scn->camera.far / (scn->camera.far - scn->camera.near);
 	matrix proj = {{
 		{ 1 / hfov,        0,      0,      0 },
@@ -297,6 +405,7 @@ void draw(screen *scr, scene *scn) {
 		{ 0,   0,  0, 1 }
 	}};
 
+    #pragma omp parallel for
 	for (int i = 0; i < scn->mesh.face_len; i++) {
 		face f = scn->mesh.faces[i];
 
@@ -321,7 +430,6 @@ void draw(screen *scr, scene *scn) {
 			matmul(scn->mesh.norms[f.n[2] - 1], rot_y, &tmp);
 			matmul(tmp, rot_z, &t.n[2]);
 		} else {
-			printf("no normal\n");
 			vec e1 = v2, e2 = v3;
 			vec_sub(&e1, v1);
 			vec_sub(&e2, v1);
@@ -334,16 +442,27 @@ void draw(screen *scr, scene *scn) {
 			vec_unit(&n);
 			t.n[0] = n;
 			t.n[1] = n;
-			t.n[2] = n;
+			t.n[2] = n; 
 		}
+
+		if (f.t[0] <= scn->mesh.uv_len && f.t[1] <= scn->mesh.uv_len && f.t[2] <= scn->mesh.uv_len) {
+            t.t[0] = scn->mesh.uvs[f.t[0] - 1];
+            t.t[1] = scn->mesh.uvs[f.t[1] - 1];
+            t.t[2] = scn->mesh.uvs[f.t[2] - 1];
+        } else {
+            vec uv = {0, 0, 0};
+            t.t[0] = uv;
+            t.t[1] = uv;
+            t.t[2] = uv;
+        }
 		
 		matmul(v1, proj, &t.p[0]);
 		matmul(v2, proj, &t.p[1]);
 		matmul(v3, proj, &t.p[2]);
 		
 		if (fabs(t.p[0].z) > 1 || fabs(t.p[1].z) > 1 || fabs(t.p[2].z) > 1) continue;
-		
-		draw_trig(scr, t, scn->light);	
+
+		draw_trig(scr, scn->tex, t, scn->light);	
 
 	}
 }
@@ -362,7 +481,7 @@ void load_obj(FILE *f, mesh *m) {
 			add_norm(m, &v);
 		} else if (strcmp(s, "vt") == 0) {
 			vec v = {0, 0, 0};
-			fscanf(f, " %lf %lf %lf", &v.x, &v.y, &v.z);
+			fscanf(f, " %lf %lf", &v.x, &v.y);
 			add_uv(m, &v);
 		} else if (strcmp(s, "f") == 0) {
 			face b;
@@ -378,12 +497,25 @@ void load_obj(FILE *f, mesh *m) {
 	}
 };
 
+void load_tex(FILE *f, texture *tex) {
+    fscanf(f, "%*s %zu %zu %zu", &tex->width, &tex->height, &tex->maxval);
+    tex->data = malloc(tex->width * tex->height * 3 * sizeof(uint8_t));
+    for (int y = 0; y < tex->height; y++) {
+        for (int x = 0; x < tex->width; x++) {
+            for (int i = 0; i < 3; i++) {
+                fscanf(f, " %hhu", &tex->data[3*(y * tex->width + x) + i]);
+            }
+        }
+    }
+    
+}
+
 #define WIDTH 1280
 #define HEIGHT 720
 
 int main(int argc, char *argv[]) {	
-	if (argc != 2) {
-		printf("usage: %s file.obj\n", argv[0]);
+	if (argc != 3) {
+		printf("usage: %s file.obj texture.ppm\n", argv[0]);
 		return 1;
 	}
 
@@ -395,6 +527,15 @@ int main(int argc, char *argv[]) {
 	mesh m = {0};
 	load_obj(f, &m);
 	fclose(f);
+
+    f = fopen(argv[2], "r");
+	if (!f) {
+		printf("Failed to load texture\n");
+		return 1;
+	}
+    texture tex = {0};
+    load_tex(f, &tex);
+    fclose(f);
 
 	double zmax = 0;
 	for (int i = 0; i < m.vert_len; i++) {
@@ -423,15 +564,17 @@ int main(int argc, char *argv[]) {
 		if (tigrKeyHeld(screen, 'Z')) c.fov *= 61./60;	
 		if (tigrKeyHeld(screen, 'X')) c.fov *= 60./61;	
 
-		scene scn = { m, c, light };
+		scene scn = { m, c, light, tex };
 		struct screen scr = { WIDTH, HEIGHT, screen, z };
 
 		tigrClear(screen, tigrRGB(0, 0, 0));
 		draw(&scr, &scn);
-		tigrUpdate(screen);	
+		tigrUpdate(screen);	 
 		printf("%d\n", t++);
+        // usleep(30000);
 	}
 	
 	free(z);
 	return 0;
 }
+
